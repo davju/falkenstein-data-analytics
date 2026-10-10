@@ -1,0 +1,13 @@
+[project]
+name = "ross-falkenstein"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = ["azure-storage-blob", "polars", "azure-identity", "requests", "python-dotenv", "lib"]
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.uv.sources]
+lib = { path = "lib", editable = true }
