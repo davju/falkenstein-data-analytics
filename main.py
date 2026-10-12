@@ -2,7 +2,7 @@ import os
 
 from azure.core import exceptions
 from dotenv import load_dotenv
-from lib.azure import authenticate_azure_blob, upload_to_azure_blob
+from lib.azure import authenticate_by_access_key, upload_to_azure_blob
 from lib.file_handling import fetch_content_from_url, extract_io_zip_to_folder
 
 load_dotenv()
@@ -11,7 +11,10 @@ load_dotenv()
 def main():
     blob_name = os.environ["blob_name"]
     container_name = os.environ["container_name"]
-    service_client = authenticate_azure_blob(f"https://{blob_name}.blob.core.windows.net")
+    account_name = os.environ["account_name"]
+    key = os.environ["key"]
+    
+    service_client = authenticate_by_access_key(account_name, key)
 
     try:
         service_client.create_container(container_name)
