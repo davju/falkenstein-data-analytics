@@ -5,6 +5,21 @@ from pathlib import Path
 import shutil
 import zipfile
 
+import polars as pl
+
+def safe_BytesIO_to_csv(content: io.BytesIO, output_path: str) -> None:
+    # Example: convert BytesIO to CSV
+    content.seek(0)  # Ensure we're at the start of the BytesIO object
+    try:
+        pl.read_csv(content)
+    except Exception as exc:
+        raise ValueError("Invalid CSV content") from exc
+
+    content.seek(0)
+    with open(output_path, "wb") as f:
+        f.write(content.read())
+
+
 def rename_with_current_timestamp(original_name: str) -> str:
     # Example: prefix files or strip existing subdirectories
 
