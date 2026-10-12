@@ -1,11 +1,14 @@
 import requests
 import io
+import json
 from datetime import datetime
 from pathlib import Path
 import shutil
 import zipfile
 
 import polars as pl
+
+
 
 def safe_BytesIO_to_csv(content: io.BytesIO, output_path: str) -> None:
     # Example: convert BytesIO to CSV
@@ -19,6 +22,16 @@ def safe_BytesIO_to_csv(content: io.BytesIO, output_path: str) -> None:
     with open(output_path, "wb") as f:
         f.write(content.read())
 
+def safe_BytesIO_to_json(content: io.BytesIO, output_path: str) -> None:
+    content.seek(0)
+    try:
+        json.load(content)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("Invalid JSON content") from exc
+
+    content.seek(0)
+    with open(output_path, "wb") as f:
+        f.write(content.read())
 
 def rename_with_current_timestamp(original_name: str) -> str:
     # Example: prefix files or strip existing subdirectories

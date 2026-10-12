@@ -14,7 +14,7 @@ def main():
     key = os.environ["key"]
     source_url = os.environ["source_url"]
     service_client = authenticate_by_access_key(account_name, key)
-    
+
     try:
         service_client.create_container(container_name)
         print(f"Created Azure Blob container: {container_name}")
@@ -22,9 +22,9 @@ def main():
         print(f"Using existing Azure Blob container: {container_name}")
 
     content = fetch_content_from_url(source_url)
-    extract_io_zip_to_folder(content)
-
-    upload_to_azure_blob("extracted_files", service_client, container_name)
+    #extract_io_zip_to_folder(content)
+    
+    #upload_to_azure_blob("extracted_files", service_client, container_name)
 
 if __name__ == "__main__":
     main()
