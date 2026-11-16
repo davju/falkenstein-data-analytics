@@ -6,8 +6,11 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = ["azure-storage-blob", "polars", "azure-identity", "requests", "python-dotenv", "lib"]
 
+[project.scripts]
+dairynet = "lib.dairynet_cli:main"
+
 [tool.setuptools]
-py-modules = ["main"]
+py-modules = ["main", "dairynet_cli"]
 
 [tool.uv.sources]
 lib = { path = "lib", editable = true }

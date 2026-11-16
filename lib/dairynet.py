@@ -2497,3 +2497,16 @@ def fetch_feed_ration_changes(
         base_url=base_url,
         timeout=timeout,
     )
+
+
+if __name__ == "__main__":
+    import pathlib
+    import sys
+
+    _repo_root = str(pathlib.Path(__file__).resolve().parent.parent)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from lib.dairynet_cli import main as _cli_main
+
+    raise SystemExit(_cli_main())
+
