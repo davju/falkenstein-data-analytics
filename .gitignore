@@ -9,5 +9,7 @@ wheels/
 # Virtual environments
 .venv
 extracted_files/
-
+old/
 data/
+
+important_endpoints.txt
