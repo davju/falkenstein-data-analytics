@@ -1,6 +1,6 @@
 import os
 from collections.abc import Callable, Iterator
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import requests
@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 
 from lib import dairy_net
 from lib.azure import authenticate_by_access_key
-from lib.file_handling import rename_with_current_timestamp
 
 load_dotenv()
 
@@ -74,14 +73,31 @@ ENDPOINT_FUNCTIONS: dict[str, Callable[..., requests.Response]] = {
 }
 
 
-def _extension_for_response(response: requests.Response) -> tuple[str, str]:
-    """Return file extension and MIME type based on the HTTP response Content-Type."""
-    content_type = response.headers.get("Content-Type", "application/json").lower()
-    if "text/html" in content_type:
-        return ".html", "text/html"
-    if "text/csv" in content_type:
-        return ".csv", "text/csv"
-    return ".json", "application/json"
+CATTLE_ID_NOT_APPLICABLE = "cattleIdNotApplicable"
+START_DATE_NOT_APPLICABLE = "startDateNotApplicable"
+END_DATE_NOT_APPLICABLE = "endDateNotApplicable"
+
+
+def _to_camel_case(snake_str: str) -> str:
+    """Convert a snake_case string to camelCase (so endpointName contains no underscores)."""
+    parts = snake_str.split("_")
+    return parts[0] + "".join(word.capitalize() for word in parts[1:])
+
+
+def build_blob_filename(
+    endpoint_name: str,
+    cattle_id: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    upload_date: str | None = None,
+) -> str:
+    """Build filename following uploadDate_endpointName_cattleId_startDate_endDate.json."""
+    upload_date_str = upload_date or datetime.now().strftime("%Y-%m-%d")
+    endpoint_part = _to_camel_case(endpoint_name)
+    cattle_part = cattle_id if cattle_id else CATTLE_ID_NOT_APPLICABLE
+    start_part = start_date.split("T", 1)[0] if start_date else START_DATE_NOT_APPLICABLE
+    end_part = end_date.split("T", 1)[0] if end_date else END_DATE_NOT_APPLICABLE
+    return f"{upload_date_str}_{endpoint_part}_{cattle_part}_{start_part}_{end_part}.json"
 
 
 def _iter_daily_milk_timestamps(
@@ -116,12 +132,17 @@ def upload_endpoint_response_to_folder(
     container_name: str,
     folder_name: str,
     response: requests.Response,
-    file_stem: str | None = None,
+    cattle_id: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> str:
     """Upload an endpoint response into its own folder inside the Azure Blob container."""
-    ext, mime_type = _extension_for_response(response)
-    stem = file_stem if file_stem is not None else folder_name
-    filename = rename_with_current_timestamp(f"{stem}{ext}")
+    filename = build_blob_filename(
+        endpoint_name=folder_name,
+        cattle_id=cattle_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
     blob_path = f"{folder_name}/{filename}"
 
     blob_client = blob_service_client.get_blob_client(
@@ -131,7 +152,7 @@ def upload_endpoint_response_to_folder(
     blob_client.upload_blob(
         response.content,
         overwrite=True,
-        content_settings=ContentSettings(content_type=mime_type),
+        content_settings=ContentSettings(content_type="application/json"),
     )
     return blob_path
 
@@ -183,7 +204,9 @@ def ingest_all_endpoints(
                         container_name=container_name,
                         folder_name=folder_name,
                         response=response,
-                        file_stem=f"{folder_name}_{day_str}",
+                        cattle_id=params.get("cattle_id"),
+                        start_date=day_str,
+                        end_date=day_str,
                     )
                     print(
                         f"Uploaded '{folder_name}' ({day_str}) -> {container_name}/{blob_path}",
@@ -197,6 +220,20 @@ def ingest_all_endpoints(
                     )
             continue
 
+        cattle_id = params.get("cattle_id")
+        start_date = (
+            params.get("report_date_from")
+            or params.get("from_date")
+            or params.get("start_date")
+            or params.get("timestamp")
+        )
+        end_date = (
+            params.get("report_date_until")
+            or params.get("to_date")
+            or params.get("end_date")
+            or params.get("timestamp")
+        )
+
         print(f"Fetching '{folder_name}' with params={params}...", flush=True)
         try:
             response = fetch_fn(session=session, **params)
@@ -205,6 +242,9 @@ def ingest_all_endpoints(
                 container_name=container_name,
                 folder_name=folder_name,
                 response=response,
+                cattle_id=cattle_id,
+                start_date=start_date,
+                end_date=end_date,
             )
             print(f"Uploaded '{folder_name}' -> {container_name}/{blob_path}", flush=True)
             uploaded_blobs.append(blob_path)
