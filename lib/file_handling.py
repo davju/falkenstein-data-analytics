@@ -6,11 +6,10 @@ from pathlib import Path
 import shutil
 import zipfile
 
-import polars as pl
-
-
 
 def safe_BytesIO_to_csv(content: io.BytesIO, output_path: str) -> None:
+    import polars as pl
+
     # Example: convert BytesIO to CSV
     content.seek(0)  # Ensure we're at the start of the BytesIO object
     try:

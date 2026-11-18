@@ -109,6 +109,7 @@ def ingest_all_endpoints(
     parameters: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
     """Fetch all DairyNet endpoints and upload each response to its own Azure Blob folder."""
+    print("Starting DairyNet ingestion...", flush=True)
     container_name = os.environ["container_name"]
     account_name = os.environ["account_name"]
     key = os.environ["key"]
@@ -116,28 +117,33 @@ def ingest_all_endpoints(
     service_client = authenticate_by_access_key(account_name, key)
     try:
         service_client.create_container(container_name)
-        print(f"Created Azure Blob container: {container_name}")
+        print(f"Created Azure Blob container: {container_name}", flush=True)
     except exceptions.ResourceExistsError:
-        print(f"Using existing Azure Blob container: {container_name}")
+        print(f"Using existing Azure Blob container: {container_name}", flush=True)
 
+    print("Authenticating with DairyNet...", flush=True)
     session = dairy_net.authenticate_dairynet_session()
+    print("Authenticated with DairyNet successfully.", flush=True)
     endpoint_params = parameters if parameters is not None else ENDPOINT_PARAMETERS
 
     uploaded_blobs: list[str] = []
     for folder_name, fetch_fn in ENDPOINT_FUNCTIONS.items():
         params = endpoint_params.get(folder_name, {})
-        print(f"Fetching '{folder_name}' with params={params}...")
-        response = fetch_fn(session=session, **params)
+        print(f"Fetching '{folder_name}' with params={params}...", flush=True)
+        try:
+            response = fetch_fn(session=session, **params)
+            blob_path = upload_endpoint_response_to_folder(
+                blob_service_client=service_client,
+                container_name=container_name,
+                folder_name=folder_name,
+                response=response,
+            )
+            print(f"Uploaded '{folder_name}' -> {container_name}/{blob_path}", flush=True)
+            uploaded_blobs.append(blob_path)
+        except Exception as exc:
+            print(f"Failed to ingest '{folder_name}': {exc}", flush=True)
 
-        blob_path = upload_endpoint_response_to_folder(
-            blob_service_client=service_client,
-            container_name=container_name,
-            folder_name=folder_name,
-            response=response,
-        )
-        print(f"Uploaded '{folder_name}' -> {container_name}/{blob_path}")
-        uploaded_blobs.append(blob_path)
-
+    print(f"Finished ingestion. Uploaded {len(uploaded_blobs)}/{len(ENDPOINT_FUNCTIONS)} files.", flush=True)
     return uploaded_blobs
 
 
