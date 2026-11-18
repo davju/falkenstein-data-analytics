@@ -47,7 +47,7 @@ ENDPOINT_PARAMETERS: dict[str, dict[str, Any]] = {
         "page_index": 2,
         "page_size": 20,
     },
-    "cattle_custom_preset": {
+    "herd_info": {
         "preset_id": "ac13dd8b-ca1f-43ee-8dbe-4668a66dbcd2",
         "herd_selection": {
             "name": "Ganze Herde",
@@ -69,7 +69,7 @@ ENDPOINT_FUNCTIONS: dict[str, Callable[..., requests.Response]] = {
     "cattle_view": dairy_net.fetch_cattle_view,
     "cattle_by_id": dairy_net.fetch_cattle_by_id,
     "milk_visits_for_single_cattle": dairy_net.fetch_milk_visits_for_single_cattle,
-    "cattle_custom_preset": dairy_net.fetch_cattle_custom_preset,
+    "herd_info": dairy_net.fetch_herd_info,
 }
 
 

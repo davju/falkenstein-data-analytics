@@ -343,7 +343,7 @@ def fetch_milk_visits_for_single_cattle(
     )
 
 
-def fetch_cattle_custom_preset(
+def fetch_herd_info(
     session: requests.Session | None = None,
     preset_id: str = "ac13dd8b-ca1f-43ee-8dbe-4668a66dbcd2",
     herd_selection: dict[str, Any] | str | None = None,
@@ -352,7 +352,7 @@ def fetch_cattle_custom_preset(
     base_url: str = DEFAULT_BASE_URL,
     timeout: int = 15,
 ) -> requests.Response:
-    """Fetch cattle list data using a custom column preset ID and herd selection filter.
+    """Fetch herd info (cattle list data including cattle IDs and lactation days) using a custom column preset ID and herd selection filter.
 
     Endpoint:
         GET http://10.150.1.246/dairynetbackend/herdmanagement/cattle/customPreset/{preset_id}
