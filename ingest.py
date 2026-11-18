@@ -1,5 +1,6 @@
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from datetime import date, timedelta
 from typing import Any
 
 import requests
@@ -16,7 +17,8 @@ load_dotenv()
 # Parameters passed to each endpoint function in lib/dairy_net.py
 ENDPOINT_PARAMETERS: dict[str, dict[str, Any]] = {
     "daily_milk_simple_list": {
-        "timestamp": "2026-10-11T21:23",
+        "from_date": "2026-01-01T21:23",
+        "to_date": "2026-11-17T21:23",
     },
     "cow_monitor": {
         "page_index": 1,
@@ -82,15 +84,44 @@ def _extension_for_response(response: requests.Response) -> tuple[str, str]:
     return ".json", "application/json"
 
 
+def _iter_daily_milk_timestamps(
+    from_date: str,
+    to_date: str,
+    default_time: str = "21:23",
+) -> Iterator[tuple[str, str]]:
+    """Yield (YYYY-MM-DD, YYYY-MM-DDTHH:MM) for every day in [from_date, to_date] inclusive."""
+    from_parts = from_date.split("T", 1)
+    to_parts = to_date.split("T", 1)
+
+    start_day = date.fromisoformat(from_parts[0])
+    end_day = date.fromisoformat(to_parts[0])
+    if start_day > end_day:
+        raise ValueError(f"from_date ({from_date}) must not be after to_date ({to_date})")
+
+    time_part = (
+        from_parts[1]
+        if len(from_parts) > 1
+        else (to_parts[1] if len(to_parts) > 1 else default_time)
+    )
+
+    current_day = start_day
+    while current_day <= end_day:
+        day_str = current_day.isoformat()
+        yield day_str, f"{day_str}T{time_part}"
+        current_day += timedelta(days=1)
+
+
 def upload_endpoint_response_to_folder(
     blob_service_client: BlobServiceClient,
     container_name: str,
     folder_name: str,
     response: requests.Response,
+    file_stem: str | None = None,
 ) -> str:
     """Upload an endpoint response into its own folder inside the Azure Blob container."""
     ext, mime_type = _extension_for_response(response)
-    filename = rename_with_current_timestamp(f"{folder_name}{ext}")
+    stem = file_stem if file_stem is not None else folder_name
+    filename = rename_with_current_timestamp(f"{stem}{ext}")
     blob_path = f"{folder_name}/{filename}"
 
     blob_client = blob_service_client.get_blob_client(
@@ -129,6 +160,43 @@ def ingest_all_endpoints(
     uploaded_blobs: list[str] = []
     for folder_name, fetch_fn in ENDPOINT_FUNCTIONS.items():
         params = endpoint_params.get(folder_name, {})
+
+        if folder_name == "daily_milk_simple_list" and "from_date" in params and "to_date" in params:
+            extra_kwargs = {
+                k: v for k, v in params.items() if k not in {"from_date", "to_date"}
+            }
+            for day_str, day_timestamp in _iter_daily_milk_timestamps(
+                params["from_date"], params["to_date"]
+            ):
+                print(
+                    f"Fetching '{folder_name}' for {day_timestamp}...",
+                    flush=True,
+                )
+                try:
+                    response = fetch_fn(
+                        session=session,
+                        timestamp=day_timestamp,
+                        **extra_kwargs,
+                    )
+                    blob_path = upload_endpoint_response_to_folder(
+                        blob_service_client=service_client,
+                        container_name=container_name,
+                        folder_name=folder_name,
+                        response=response,
+                        file_stem=f"{folder_name}_{day_str}",
+                    )
+                    print(
+                        f"Uploaded '{folder_name}' ({day_str}) -> {container_name}/{blob_path}",
+                        flush=True,
+                    )
+                    uploaded_blobs.append(blob_path)
+                except Exception as exc:
+                    print(
+                        f"Failed to ingest '{folder_name}' for {day_timestamp}: {exc}",
+                        flush=True,
+                    )
+            continue
+
         print(f"Fetching '{folder_name}' with params={params}...", flush=True)
         try:
             response = fetch_fn(session=session, **params)
@@ -143,7 +211,7 @@ def ingest_all_endpoints(
         except Exception as exc:
             print(f"Failed to ingest '{folder_name}': {exc}", flush=True)
 
-    print(f"Finished ingestion. Uploaded {len(uploaded_blobs)}/{len(ENDPOINT_FUNCTIONS)} files.", flush=True)
+    print(f"Finished ingestion. Uploaded {len(uploaded_blobs)} files.", flush=True)
     return uploaded_blobs
 
 
