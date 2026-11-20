@@ -310,7 +310,7 @@ def fetch_cattle_by_id(
 def fetch_milk_visits_for_single_cattle(
     session: requests.Session | None = None,
     cattle_id: str = "5288cd84-46af-496e-8cdf-ae198ede22fe",
-    page_index: int = 2,
+    page_index: int = 1,
     page_size: int = 20,
     *,
     extra_params: dict[str, Any] | None = None,
@@ -321,7 +321,7 @@ def fetch_milk_visits_for_single_cattle(
 
     Endpoint:
         GET http://10.150.1.246/dairynetbackend/dairybox.milking/v1.0/milkvisit/listForSingleCattle/{cattle_id}
-            ?pageIndex=2&pageSize=20
+            ?pageIndex=1&pageSize=20
     """
     params: dict[str, Any] = {
         "pageIndex": page_index,

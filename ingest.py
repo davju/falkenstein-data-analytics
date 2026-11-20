@@ -42,11 +42,6 @@ ENDPOINT_PARAMETERS: dict[str, dict[str, Any]] = {
     "cattle_by_id": {
         "cattle_id": "5288cd84-46af-496e-8cdf-ae198ede22fe",
     },
-    "milk_visits_for_single_cattle": {
-        "cattle_id": "5288cd84-46af-496e-8cdf-ae198ede22fe",
-        "page_index": 2,
-        "page_size": 20,
-    },
     "herd_info": {
         "preset_id": "ac13dd8b-ca1f-43ee-8dbe-4668a66dbcd2",
         "herd_selection": {
@@ -58,6 +53,9 @@ ENDPOINT_PARAMETERS: dict[str, dict[str, Any]] = {
             "id": None,
         },
     },
+    "cow_milk_visits": {
+        "initial_page_size": 100,
+    },
 }
 
 # Mapping of folder/endpoint names to their fetch functions in lib/dairy_net.py
@@ -68,8 +66,8 @@ ENDPOINT_FUNCTIONS: dict[str, Callable[..., requests.Response]] = {
     "conspicuous_conductivity_alarms": dairy_net.fetch_conspicuous_conductivity_alarms,
     "cattle_view": dairy_net.fetch_cattle_view,
     "cattle_by_id": dairy_net.fetch_cattle_by_id,
-    "milk_visits_for_single_cattle": dairy_net.fetch_milk_visits_for_single_cattle,
     "herd_info": dairy_net.fetch_herd_info,
+    "cow_milk_visits": dairy_net.fetch_milk_visits_for_single_cattle,
 }
 
 
@@ -127,6 +125,77 @@ def _iter_daily_milk_timestamps(
         current_day += timedelta(days=1)
 
 
+def _extract_cattle_ids_from_herd_info(response: requests.Response) -> list[str]:
+    """Extract all cattle IDs from a herd_info JSON response."""
+    data = response.json()
+    items: list[Any] = []
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        for key in ("content", "elements", "data", "items"):
+            if isinstance(data.get(key), list):
+                items = data[key]
+                break
+
+    cattle_ids: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if isinstance(item, dict):
+            raw_id = item.get("CATTLE_ID") or item.get("cattleId") or item.get("id")
+            if raw_id:
+                cattle_id = str(raw_id)
+                if cattle_id not in seen:
+                    seen.add(cattle_id)
+                    cattle_ids.append(cattle_id)
+    return cattle_ids
+
+
+def _extract_response_list_length(response: requests.Response) -> int:
+    """Return the number of items in a JSON list or paginated JSON object response."""
+    data = response.json()
+    if isinstance(data, list):
+        return len(data)
+    if isinstance(data, dict):
+        for key in ("content", "elements", "data", "items", "milkVisits"):
+            if isinstance(data.get(key), list):
+                return len(data[key])
+        if isinstance(data.get("numberOfElements"), int):
+            return data["numberOfElements"]
+        for value in data.values():
+            if isinstance(value, list):
+                return len(value)
+    return 0
+
+
+def fetch_all_milk_visits_for_cattle(
+    session: requests.Session,
+    cattle_id: str,
+    initial_page_size: int = 100,
+    fetch_fn: Callable[..., requests.Response] = dairy_net.fetch_milk_visits_for_single_cattle,
+    **extra_kwargs: Any,
+) -> requests.Response:
+    """Fetch all milk visits for a single cattle ID by keeping page_index=1 and doubling page_size until the response list size stops growing."""
+    page_size = max(1, initial_page_size)
+    prev_count: int | None = None
+    best_response: requests.Response | None = None
+
+    while True:
+        response = fetch_fn(
+            session=session,
+            cattle_id=cattle_id,
+            page_index=1,
+            page_size=page_size,
+            **extra_kwargs,
+        )
+        current_count = _extract_response_list_length(response)
+        if prev_count is not None and current_count <= prev_count:
+            return best_response if (best_response is not None and current_count < prev_count) else response
+
+        best_response = response
+        prev_count = current_count
+        page_size *= 2
+
+
 def upload_endpoint_response_to_folder(
     blob_service_client: BlobServiceClient,
     container_name: str,
@@ -135,15 +204,16 @@ def upload_endpoint_response_to_folder(
     cattle_id: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    filename: str | None = None,
 ) -> str:
     """Upload an endpoint response into its own folder inside the Azure Blob container."""
-    filename = build_blob_filename(
+    resolved_filename = filename or build_blob_filename(
         endpoint_name=folder_name,
         cattle_id=cattle_id,
         start_date=start_date,
         end_date=end_date,
     )
-    blob_path = f"{folder_name}/{filename}"
+    blob_path = f"{folder_name}/{resolved_filename}"
 
     blob_client = blob_service_client.get_blob_client(
         container=container_name,
@@ -179,6 +249,8 @@ def ingest_all_endpoints(
     endpoint_params = parameters if parameters is not None else ENDPOINT_PARAMETERS
 
     uploaded_blobs: list[str] = []
+    herd_cattle_ids: list[str] | None = None
+
     for folder_name, fetch_fn in ENDPOINT_FUNCTIONS.items():
         params = endpoint_params.get(folder_name, {})
 
@@ -220,6 +292,72 @@ def ingest_all_endpoints(
                     )
             continue
 
+        if folder_name == "cow_milk_visits":
+            if herd_cattle_ids is None:
+                herd_info_params = endpoint_params.get("herd_info", {})
+                print(
+                    f"Fetching 'herd_info' for cattle IDs with params={herd_info_params}...",
+                    flush=True,
+                )
+                try:
+                    herd_response = dairy_net.fetch_herd_info(
+                        session=session,
+                        **herd_info_params,
+                    )
+                    herd_cattle_ids = _extract_cattle_ids_from_herd_info(herd_response)
+                except Exception as exc:
+                    print(
+                        f"Failed to fetch cattle IDs from 'herd_info': {exc}",
+                        flush=True,
+                    )
+                    herd_cattle_ids = []
+
+            initial_page_size = int(
+                params.get("initial_page_size") or params.get("page_size") or 100
+            )
+            extra_kwargs = {
+                k: v
+                for k, v in params.items()
+                if k not in {"cattle_id", "page_index", "page_size", "initial_page_size"}
+            }
+
+            print(
+                f"Fetching '{folder_name}' for {len(herd_cattle_ids)} cattle (initial_page_size={initial_page_size}, page_index=1)...",
+                flush=True,
+            )
+            for cattle_id in herd_cattle_ids:
+                print(
+                    f"Fetching '{folder_name}' for cattle_id={cattle_id}...",
+                    flush=True,
+                )
+                try:
+                    response = fetch_all_milk_visits_for_cattle(
+                        session=session,
+                        cattle_id=cattle_id,
+                        initial_page_size=initial_page_size,
+                        fetch_fn=fetch_fn,
+                        **extra_kwargs,
+                    )
+                    blob_path = upload_endpoint_response_to_folder(
+                        blob_service_client=service_client,
+                        container_name=container_name,
+                        folder_name=folder_name,
+                        response=response,
+                        cattle_id=cattle_id,
+                        filename=f"{cattle_id}.json",
+                    )
+                    print(
+                        f"Uploaded '{folder_name}' ({cattle_id}) -> {container_name}/{blob_path}",
+                        flush=True,
+                    )
+                    uploaded_blobs.append(blob_path)
+                except Exception as exc:
+                    print(
+                        f"Failed to ingest '{folder_name}' for cattle_id={cattle_id}: {exc}",
+                        flush=True,
+                    )
+            continue
+
         cattle_id = params.get("cattle_id")
         start_date = (
             params.get("report_date_from")
@@ -237,6 +375,18 @@ def ingest_all_endpoints(
         print(f"Fetching '{folder_name}' with params={params}...", flush=True)
         try:
             response = fetch_fn(session=session, **params)
+            if folder_name == "herd_info":
+                try:
+                    herd_cattle_ids = _extract_cattle_ids_from_herd_info(response)
+                    print(
+                        f"Extracted {len(herd_cattle_ids)} cattle IDs from 'herd_info'.",
+                        flush=True,
+                    )
+                except Exception as exc:
+                    print(
+                        f"Failed to parse cattle IDs from 'herd_info': {exc}",
+                        flush=True,
+                    )
             blob_path = upload_endpoint_response_to_folder(
                 blob_service_client=service_client,
                 container_name=container_name,
